@@ -8,6 +8,7 @@
 
     <application
         android:label="Despertador Pro"
+        android:name="${applicationName}"
         android:theme="@style/LaunchTheme">
         <meta-data
             android:name="flutterEmbedding"

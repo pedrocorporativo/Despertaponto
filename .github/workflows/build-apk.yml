@@ -15,18 +15,11 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.29.3"
+          flutter-version: "3.47.5"
           channel: stable
 
-      - name: Create Android wrapper
-        run: flutter create --platforms=android --project-name despertador_pro .
-
-      - name: Restore custom Android sources
-        run: |
-          git checkout -- android/app/src/main/AndroidManifest.xml || true
-          git checkout -- android/app/src/main/kotlin/com/pedro/despertadorpro || true
-          git checkout -- android/app/src/main/res/values/styles.xml || true
-          git checkout -- android/app/build.gradle android/build.gradle android/settings.gradle || true
+      - name: Clean project
+        run: flutter clean
 
       - name: Dependencies
         run: flutter pub get
