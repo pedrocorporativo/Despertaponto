@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'package:android_intent_plus/android_intent.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -61,20 +61,32 @@ class Alarm {
     'tone': tone,
   };
 
-  static Alarm fromMap(Map<String, dynamic> m) => Alarm(
-    id: m['id'] as int,
-    time: TimeOfDay(hour: m['hour'] as int, minute: m['minute'] as int),
-    enabled: m['enabled'] as bool,
-    weekdays: (m['weekdays'] as String)
+  static Alarm fromMap(Map<String, dynamic> m) {
+    final hour = m['hour'] as int;
+    final minute = m['minute'] as int;
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      throw const FormatException('Invalid alarm time');
+    }
+    final weekdays = (m['weekdays'] as String)
         .split(',')
         .where((e) => e.isNotEmpty)
         .map(int.parse)
-        .toList(),
-    appName: m['appName'] as String,
-    packageName: m['packageName'] as String,
-    label: m['label'] as String,
-    tone: m['tone'] as String,
-  );
+        .where((day) => day >= 1 && day <= 7)
+        .toSet()
+        .toList()
+      ..sort();
+    if (weekdays.isEmpty) throw const FormatException('Alarm has no weekdays');
+    return Alarm(
+      id: m['id'] as int,
+      time: TimeOfDay(hour: hour, minute: minute),
+      enabled: m['enabled'] as bool,
+      weekdays: weekdays,
+      appName: m['appName'] as String,
+      packageName: m['packageName'] as String,
+      label: m['label'] as String,
+      tone: m['tone'] as String,
+    );
+  }
 }
 
 class AlarmStore {
@@ -83,11 +95,15 @@ class AlarmStore {
   static Future<List<Alarm>> load() async {
     final p = await SharedPreferences.getInstance();
     final raw = p.getStringList(key) ?? [];
-    return raw.map((s) => Alarm.fromMap(
-      Map<String, dynamic>.from(Uri.splitQueryString(s).map(
-        (k, v) => MapEntry(k, _decode(v)),
-      )),
-    )).toList();
+    return raw.map((s) {
+      try {
+        return Alarm.fromMap(Map<String, dynamic>.from(
+          Uri.splitQueryString(s).map((k, v) => MapEntry(k, _decode(v))),
+        ));
+      } catch (_) {
+        return null;
+      }
+    }).whereType<Alarm>().toList();
   }
 
   static dynamic _decode(String v) {
@@ -106,6 +122,23 @@ class AlarmStore {
       ).join('&');
     }).toList();
     await p.setStringList(key, values);
+  }
+}
+
+class AlarmScheduler {
+  static const _channel = MethodChannel('com.pedro.despertadorpro/alarms');
+
+  static Future<void> sync(Iterable<Alarm> alarms) async {
+    await _channel.invokeMethod<void>('syncAlarms', alarms.map((alarm) => {
+      'id': alarm.id,
+      'hour': alarm.time.hour,
+      'minute': alarm.time.minute,
+      'enabled': alarm.enabled,
+      'weekdays': alarm.weekdays,
+      'appName': alarm.appName,
+      'packageName': alarm.packageName,
+      'tone': alarm.tone,
+    }).toList());
   }
 }
 
@@ -172,10 +205,15 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _load() async {
     final loaded = await AlarmStore.load();
-    if (mounted) setState(() => alarms = loaded);
+    if (!mounted) return;
+    setState(() => alarms = loaded);
+    await AlarmScheduler.sync(loaded);
   }
 
-  Future<void> _save() => AlarmStore.save(alarms);
+  Future<void> _save() async {
+    await AlarmStore.save(alarms);
+    await AlarmScheduler.sync(alarms);
+  }
 
   String _format(TimeOfDay t) =>
       '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -215,21 +253,6 @@ class _HomePageState extends State<HomePage> {
     await _save();
   }
 
-  Future<void> _testApp(Alarm a) async {
-    try {
-      await AndroidIntent(
-        action: 'android.intent.action.MAIN',
-        package: a.packageName,
-        category: 'android.intent.category.LAUNCHER',
-      ).launch();
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${a.appName} não está instalado.')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final date = DateFormat("EEEE, d 'de' MMMM", 'pt_BR').format(now);
@@ -245,7 +268,7 @@ class _HomePageState extends State<HomePage> {
             onPressed: () => showAboutDialog(
               context: context,
               applicationName: 'Despertador Pro',
-              applicationVersion: '1.0.0',
+              applicationVersion: '1.0.0+1',
               children: const [
                 Text('Despertador com alarme em tela cheia e abertura do aplicativo escolhido.'),
               ],
@@ -267,7 +290,7 @@ class _HomePageState extends State<HomePage> {
             Text(_format(TimeOfDay.fromDateTime(now)),
               style: const TextStyle(fontSize: 52, fontWeight: FontWeight.w800)),
             Text(date[0].toUpperCase() + date.substring(1),
-              style: TextStyle(color: Colors.white.withOpacity(.55))),
+              style: TextStyle(color: Colors.white.withValues(alpha: .55))),
             const SizedBox(height: 22),
             _summary(active),
             const SizedBox(height: 18),
@@ -285,7 +308,7 @@ class _HomePageState extends State<HomePage> {
         colors: [Color(0xFF1C1A35), Color(0xFF151722)],
       ),
       borderRadius: BorderRadius.circular(24),
-      border: Border.all(color: Colors.white.withOpacity(.07)),
+      border: Border.all(color: Colors.white.withValues(alpha: .07)),
     ),
     child: Row(children: [
       const Icon(Icons.alarm_rounded, size: 30, color: Color(0xFF9B84FF)),
@@ -301,12 +324,12 @@ class _HomePageState extends State<HomePage> {
   Widget _empty() => Container(
     padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 20),
     child: Column(children: [
-      Icon(Icons.bedtime_outlined, size: 58, color: Colors.white.withOpacity(.25)),
+      Icon(Icons.bedtime_outlined, size: 58, color: Colors.white.withValues(alpha: .25)),
       const SizedBox(height: 16),
       const Text('Seu sono começa aqui', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
       Text('Crie seu primeiro alarme e escolha o aplicativo que será aberto quando você desligá-lo.',
-        textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withOpacity(.55))),
+        textAlign: TextAlign.center, style: TextStyle(color: Colors.white.withValues(alpha: .55))),
     ]),
   );
 
@@ -317,7 +340,7 @@ class _HomePageState extends State<HomePage> {
       margin: const EdgeInsets.only(bottom: 12),
       alignment: Alignment.centerRight,
       padding: const EdgeInsets.only(right: 22),
-      decoration: BoxDecoration(color: Colors.red.withOpacity(.18), borderRadius: BorderRadius.circular(22)),
+      decoration: BoxDecoration(color: Colors.red.withValues(alpha: .18), borderRadius: BorderRadius.circular(22)),
       child: const Icon(Icons.delete_outline, color: Colors.redAccent),
     ),
     onDismissed: (_) => _delete(a),
@@ -334,10 +357,10 @@ class _HomePageState extends State<HomePage> {
               Text(_format(a.time), style: const TextStyle(fontSize: 42, fontWeight: FontWeight.w800)),
               const SizedBox(height: 4),
               Text(a.label.isEmpty ? a.appName : a.label,
-                style: TextStyle(color: Colors.white.withOpacity(.8), fontWeight: FontWeight.w600)),
+                style: TextStyle(color: Colors.white.withValues(alpha: .8), fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
               Text('${_days(a.weekdays)}  •  Abrir ${a.appName}',
-                style: TextStyle(color: Colors.white.withOpacity(.45), fontSize: 12)),
+                style: TextStyle(color: Colors.white.withValues(alpha: .45), fontSize: 12)),
             ])),
             Switch(
               value: a.enabled,
@@ -371,6 +394,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
   late String app;
   late String label;
   late String tone;
+  late final TextEditingController labelController;
 
   @override
   void initState() {
@@ -381,6 +405,13 @@ class _AlarmEditorState extends State<AlarmEditor> {
     app = a?.appName ?? widget.apps.keys.first;
     label = a?.label ?? '';
     tone = a?.tone ?? 'Clássico';
+    labelController = TextEditingController(text: label);
+  }
+
+  @override
+  void dispose() {
+    labelController.dispose();
+    super.dispose();
   }
 
   Future<void> pickTime() async {
@@ -433,7 +464,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A182B),
                   borderRadius: BorderRadius.circular(28),
-                  border: Border.all(color: const Color(0xFF7C5CFF).withOpacity(.4)),
+                  border: Border.all(color: const Color(0xFF7C5CFF).withValues(alpha: .4)),
                 ),
                 child: Text(
                   '${time.hour.toString().padLeft(2,'0')}:${time.minute.toString().padLeft(2,'0')}',
@@ -456,7 +487,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
                   borderRadius: BorderRadius.circular(50),
                   child: CircleAvatar(
                     radius: 21,
-                    backgroundColor: selected ? const Color(0xFF7C5CFF) : Colors.white.withOpacity(.08),
+                    backgroundColor: selected ? const Color(0xFF7C5CFF) : Colors.white.withValues(alpha: .08),
                     child: Text(names[i], style: const TextStyle(fontWeight: FontWeight.w700)),
                   ),
                 );
@@ -464,7 +495,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
             ),
             const SizedBox(height: 20),
             TextField(
-              controller: TextEditingController(text: label),
+              controller: labelController,
               onChanged: (v) => label = v,
               maxLength: 30,
               decoration: const InputDecoration(
@@ -476,7 +507,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
             ),
             const SizedBox(height: 6),
             DropdownButtonFormField<String>(
-              value: app,
+              initialValue: app,
               decoration: const InputDecoration(
                 labelText: 'Abrir depois de desligar',
                 prefixIcon: Icon(Icons.apps_rounded),
@@ -488,7 +519,7 @@ class _AlarmEditorState extends State<AlarmEditor> {
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<String>(
-              value: tone,
+              initialValue: tone,
               decoration: const InputDecoration(
                 labelText: 'Toque',
                 prefixIcon: Icon(Icons.music_note_outlined),

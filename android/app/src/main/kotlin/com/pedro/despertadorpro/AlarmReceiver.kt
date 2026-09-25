@@ -6,6 +6,7 @@ import android.content.Intent
 
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        val id = intent?.getIntExtra("alarmId", -1) ?: -1
         val alarmIntent = Intent(context, AlarmActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -15,5 +16,6 @@ class AlarmReceiver : BroadcastReceiver() {
             putExtra("tone", intent?.getStringExtra("tone") ?: "Clássico")
         }
         context.startActivity(alarmIntent)
+        if (id >= 0) AlarmScheduler.rescheduleAll(context)
     }
 }

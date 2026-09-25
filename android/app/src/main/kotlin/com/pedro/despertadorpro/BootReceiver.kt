@@ -6,7 +6,6 @@ import android.content.Intent
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        // Ponto de extensão para reagendar alarmes persistidos após reinicialização.
-        // A versão Flutter persiste os alarmes em SharedPreferences.
+        AlarmScheduler.rescheduleAll(context)
     }
 }
