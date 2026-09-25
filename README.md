@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Despertador Pro
 
 Aplicativo Android de despertador com interface moderna.
@@ -42,3 +43,6 @@ Para uma versão de produção, ainda é recomendável adicionar:
 - snooze;
 - desafios para desligar;
 - testes específicos por fabricante (Samsung, Xiaomi, Motorola etc.).
+=======
+# Despertaponto
+>>>>>>> 0cc0ffc90a479bfb7474ec215f4891ecf22547db
